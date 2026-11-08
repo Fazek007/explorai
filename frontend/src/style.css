@@ -1,0 +1,232 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+:root {
+  color-scheme: light;
+  font-family: system-ui, sans-serif;
+  color: #1a1c1f;
+  background: #f4f5f7;
+  --page: #f4f5f7;
+  --panel: #ffffff;
+  --line: #e4e6eb;
+  --text: #1a1c1f;
+  --muted: #5c6370;
+  --assistant: #eef0f3;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --on-accent: #ffffff;
+  --input: #ffffff;
+  --shadow: 0 1px 2px rgba(16, 17, 20, 0.04), 0 8px 24px rgba(16, 17, 20, 0.06);
+  --ring: 0 0 0 3px rgba(37, 99, 235, 0.28);
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  background: var(--page);
+}
+
+#app {
+  height: 100vh;
+  padding: 0.75rem;
+  background: var(--page);
+}
+
+.layout {
+  display: flex;
+  gap: 0.75rem;
+  height: 100%;
+  width: 100%;
+  max-width: 61rem;
+  min-width: 0;
+  margin: 0 auto;
+}
+
+.description,
+.chat,
+.actions {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+
+.description {
+  flex: 0 0 16rem;
+  width: 16rem;
+  min-width: 0;
+  padding: 1.25rem;
+  overflow: auto;
+}
+
+.description p {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  height: 100%;
+  width: auto;
+  min-width: 0;
+  max-width: 34rem;
+  margin: 0;
+  overflow: hidden;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+  flex: 0 0 11rem;
+  width: 11rem;
+  min-width: 0;
+  padding: 1rem;
+}
+
+.actions button,
+.composer button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: 10px;
+  transition: background-color 0.15s ease;
+}
+
+.actions button {
+  padding: 0.5rem 0.9rem;
+  white-space: normal;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--line);
+}
+
+.actions button:hover {
+  background: var(--page);
+}
+
+.actions button:focus-visible,
+.composer button:focus-visible,
+.composer input:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+@media (max-width: 61rem) {
+  .layout {
+    flex-direction: column;
+    max-width: 34rem;
+  }
+
+  .description {
+    flex: 0 0 auto;
+    width: 100%;
+    max-height: 30%;
+  }
+
+  .chat {
+    width: 100%;
+    max-width: none;
+    min-height: 0;
+  }
+
+  .actions {
+    flex: 0 0 auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+}
+
+.messages {
+  list-style: none;
+  margin: 0;
+  padding: 1rem;
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.message {
+  max-width: 80%;
+  min-width: 0;
+  padding: 0.7rem 0.9rem;
+  border-radius: 16px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.message-assistant {
+  align-self: flex-start;
+  background: var(--assistant);
+  color: var(--text);
+}
+
+.message-user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.composer {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.85rem 1rem 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.composer input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: var(--text);
+  background: var(--input);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.55rem 0.8rem;
+}
+
+.composer input:focus-visible {
+  border-color: var(--accent);
+}
+
+.composer button {
+  padding: 0.55rem 0.95rem;
+  color: var(--on-accent);
+  background: var(--accent);
+  border: none;
+}
+
+.composer button:hover {
+  background: var(--accent-hover);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    color: #f2f3f5;
+    background: #101114;
+    --page: #101114;
+    --panel: #1a1c21;
+    --line: #2c3038;
+    --text: #f2f3f5;
+    --muted: #a0a6b2;
+    --assistant: #2a2d34;
+    --accent: #3b82f6;
+    --accent-hover: #60a5fa;
+    --on-accent: #ffffff;
+    --input: #101114;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+    --ring: 0 0 0 3px rgba(59, 130, 246, 0.4);
+  }
+}
