@@ -37,10 +37,17 @@ view.onSend((text) => {
 
 createActions(actionPanel, [
   {
-    id: "clear",
-    label: "Clear chat history",
+    id: "clear-screen",
+    label: "Clear screen",
     run: () => {
-      void chat.clear();
+      void chat.clearScreen();
+    },
+  },
+  {
+    id: "wipe-history",
+    label: "Wipe chat history",
+    run: () => {
+      void chat.wipe();
     },
   },
 ]);
