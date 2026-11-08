@@ -9,7 +9,12 @@
     "preview": "vite preview"
   },
   "devDependencies": {
+    "@types/dompurify": "^3.0.5",
     "typescript": "~7.0.2",
     "vite": "^8.3.6"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.17",
+    "marked": "^18.1.3"
   }
 }

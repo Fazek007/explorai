@@ -166,6 +166,53 @@ body {
   overflow-wrap: anywhere;
 }
 
+.message,
+.message * {
+  overflow-wrap: anywhere;
+}
+
+.message :where(p, ul, ol, pre, blockquote, h1, h2, h3, h4, h5, h6) {
+  margin: 0.4em 0;
+}
+
+.message > :first-child {
+  margin-top: 0;
+}
+
+.message > :last-child {
+  margin-bottom: 0;
+}
+
+.message :where(h1, h2, h3, h4, h5, h6) {
+  font-size: inherit;
+  font-weight: 650;
+  line-height: inherit;
+}
+
+.message :where(ul, ol) {
+  padding-left: 1.2em;
+}
+
+.message a {
+  color: inherit;
+}
+
+.message :where(code, pre) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92em;
+}
+
+.message pre {
+  white-space: pre-wrap;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.message-user pre {
+  background: rgba(255, 255, 255, 0.16);
+}
+
 .message-assistant {
   align-self: flex-start;
   background: var(--assistant);

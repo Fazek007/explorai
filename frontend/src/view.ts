@@ -1,3 +1,4 @@
+import { renderMarkdown } from "./markdown.ts";
 import type { Message } from "./types.ts";
 
 export function createView(root: HTMLElement) {
@@ -32,7 +33,7 @@ export function createView(root: HTMLElement) {
         ...messages.map((message) => {
           const item = document.createElement("li");
           item.className = `message message-${message.role}`;
-          item.textContent = message.text;
+          item.innerHTML = renderMarkdown(message.text);
           return item;
         }),
       );
