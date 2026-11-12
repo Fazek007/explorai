@@ -3,9 +3,11 @@ import json
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from chat.embed.base import EmbedderUnavailable
 from chat.llm import get_chat_model
 from chat.llm.base import ModelUnavailable
 from chat.models import GREETING, Conversation, Message
+from chat.rag.search import retrieve
 
 
 def message_payload(message):
@@ -38,6 +40,17 @@ def read_json(request):
     if not isinstance(body, dict):
         return None
     return body
+
+
+def context_message(hits):
+    passages = "\n\n".join(
+        f"{hit.chunk.source}\n{hit.chunk.text}" for hit in hits
+    )
+    return (
+        "Answer from the passages below. "
+        "If they do not contain the answer, say so.\n\n"
+        f"{passages}"
+    )
 
 
 def create_conversation():
@@ -89,21 +102,37 @@ def conversation_message(request, conversation_id):
         return JsonResponse({"error": "A text field is required."}, status=400)
 
     Message.objects.create(conversation=conversation, role="user", text=text)
-    history = [
+    try:
+        hits = retrieve(text)
+    except EmbedderUnavailable:
+        return JsonResponse({"error": "The model is unavailable."}, status=502)
+
+    history = []
+    if hits:
+        history.append({"role": "system", "text": context_message(hits)})
+    history.extend(
         {"role": message.role, "text": message.text}
         for message in conversation.messages.all()
-    ]
+    )
     try:
         reply = get_chat_model().reply(history)
     except ModelUnavailable:
         return JsonResponse({"error": "The model is unavailable."}, status=502)
 
+    sources = [
+        {
+            "source": hit.chunk.source,
+            "position": hit.chunk.position,
+            "score": hit.score,
+        }
+        for hit in hits
+    ]
     message = Message.objects.create(
         conversation=conversation,
         role="assistant",
         text=reply.text,
         model=reply.model,
-        sources=[],
+        sources=sources,
     )
     return JsonResponse(
         {
