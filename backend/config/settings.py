@@ -33,6 +33,10 @@ load_env(BASE_DIR / ".env")
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "ollama")
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
+EMBED_PROVIDER = os.environ.get("EMBED_PROVIDER", "ollama")
+OLLAMA_EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+RAG_TOP_K = int(os.environ.get("RAG_TOP_K", "3"))
+RAG_MIN_SCORE = float(os.environ.get("RAG_MIN_SCORE", "0.5"))
 
 
 # Quick-start development settings - unsuitable for production
