@@ -1,10 +1,15 @@
+import tempfile
+from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
 
+from django.core.management import call_command
 from django.test import TestCase
 from django.urls import reverse
 
 from chat.llm.base import ModelReply, ModelUnavailable
-from chat.models import GREETING, Conversation, Message
+from chat.models import GREETING, Chunk, Conversation, Message
+from chat.rag.chunking import split_paragraphs
 
 
 class FakeModel:
@@ -19,6 +24,16 @@ class FakeModel:
 class FailingModel:
     def reply(self, messages):
         raise ModelUnavailable("down")
+
+
+class FakeEmbedder:
+    model_name = "fake-embed"
+
+    def embed_documents(self, texts):
+        return [[float(len(text)), 1.0] for text in texts]
+
+    def embed_query(self, text):
+        return [float(len(text)), 1.0]
 
 
 class ConversationApiTests(TestCase):
@@ -106,3 +121,67 @@ class ConversationApiTests(TestCase):
         self.assertEqual(response.status_code, 204)
         self.assertEqual(Conversation.objects.count(), 0)
         self.assertEqual(Message.objects.count(), 0)
+
+
+class ChunkingTests(TestCase):
+    def test_split_paragraphs_drops_empty_blocks_and_numbers_positions(self):
+        text = "  First paragraph.  \n\n\n  Second paragraph.\nStill second.  \n\n   \n"
+
+        paragraphs = split_paragraphs(text, "handbook.md")
+
+        self.assertEqual(
+            paragraphs,
+            [
+                {
+                    "source": "handbook.md",
+                    "position": 0,
+                    "text": "First paragraph.",
+                },
+                {
+                    "source": "handbook.md",
+                    "position": 1,
+                    "text": "Second paragraph.\nStill second.",
+                },
+            ],
+        )
+
+
+class IndexNotesTests(TestCase):
+    def test_index_notes_writes_and_replaces_rows_for_one_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            note = path / "handbook.md"
+            note.write_text("Alpha paragraph.\n\nBeta paragraph.\n")
+
+            with patch("chat.rag.index.get_embedder", return_value=FakeEmbedder()):
+                call_command("index_notes", dir=directory, stdout=StringIO())
+
+            stored = list(
+                Chunk.objects.filter(source="handbook.md").values_list(
+                    "position", "text", "embed_model"
+                )
+            )
+            self.assertEqual(
+                stored,
+                [
+                    (0, "Alpha paragraph.", "fake-embed"),
+                    (1, "Beta paragraph.", "fake-embed"),
+                ],
+            )
+            self.assertEqual(
+                Chunk.objects.get(source="handbook.md", position=0).embedding,
+                [float(len("Alpha paragraph.")), 1.0],
+            )
+
+            note.write_text("Only paragraph.\n")
+            with patch("chat.rag.index.get_embedder", return_value=FakeEmbedder()):
+                call_command("index_notes", dir=directory, stdout=StringIO())
+
+        self.assertEqual(
+            list(
+                Chunk.objects.filter(source="handbook.md").values_list(
+                    "position", "text"
+                )
+            ),
+            [(0, "Only paragraph.")],
+        )

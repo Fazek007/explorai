@@ -10,6 +10,18 @@ class Conversation(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
+class Chunk(models.Model):
+    source = models.CharField(max_length=255)
+    position = models.PositiveIntegerField()
+    text = models.TextField()
+    embedding = models.JSONField()
+    embed_model = models.CharField(max_length=128)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["source", "position"]
+
+
 class Message(models.Model):
     conversation = models.ForeignKey(
         Conversation,
