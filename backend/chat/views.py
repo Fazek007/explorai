@@ -8,7 +8,7 @@ from chat.embed.base import EmbedderUnavailable
 from chat.llm import get_chat_model
 from chat.llm.base import ModelUnavailable
 from chat.log import write_turn
-from chat.models import GREETING, Conversation, Message
+from chat.models import Conversation, Message
 from chat.rag.search import retrieve
 from chat.route import route
 
@@ -92,13 +92,7 @@ def turn_record(question, retrieval, system, route_decision, reply=None, error=N
 
 
 def create_conversation():
-    conversation = Conversation.objects.create()
-    Message.objects.create(
-        conversation=conversation,
-        role="assistant",
-        text=GREETING,
-    )
-    return conversation
+    return Conversation.objects.create()
 
 
 @csrf_exempt

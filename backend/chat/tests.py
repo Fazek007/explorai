@@ -10,7 +10,7 @@ from django.urls import reverse
 
 from chat.embed.base import EmbedderUnavailable
 from chat.llm.base import ModelReply, ModelUnavailable
-from chat.models import GREETING, Chunk, Conversation, Message
+from chat.models import Chunk, Conversation, Message
 from chat.rag.chunking import split_paragraphs
 from chat.rag.search import Hit, Retrieval, retrieve
 
@@ -88,16 +88,11 @@ class ConversationApiTests(TestCase):
         patched.start()
         self.addCleanup(patched.stop)
 
-    def test_new_conversation_starts_with_the_greeting(self):
+    def test_new_conversation_starts_empty(self):
         response = self.client.post(reverse("conversations"))
 
         self.assertEqual(response.status_code, 201)
-        payload = response.json()
-        self.assertEqual(len(payload["messages"]), 1)
-        self.assertEqual(payload["messages"][0]["role"], "assistant")
-        self.assertEqual(payload["messages"][0]["text"], GREETING)
-        self.assertEqual(payload["messages"][0]["model"], "")
-        self.assertEqual(payload["messages"][0]["sources"], [])
+        self.assertEqual(response.json()["messages"], [])
 
     def test_sent_message_stores_the_reply(self):
         created = self.client.post(reverse("conversations"))
@@ -128,7 +123,6 @@ class ConversationApiTests(TestCase):
         self.assertEqual(
             stored,
             [
-                ("assistant", GREETING, ""),
                 ("user", "How is the lake?", ""),
                 ("assistant", "The water is calm.", "fake-model"),
             ],
@@ -367,10 +361,9 @@ class RetrievalReplyTests(TestCase):
         )
         self.assertIn("handbook.md", fake.calls[0][0]["text"])
         self.assertIn("The stack is Django.", fake.calls[0][0]["text"])
-        self.assertEqual(fake.calls[0][1]["role"], "assistant")
         self.assertEqual(
-            fake.calls[0][-1],
-            {"role": "user", "text": "What is the stack?"},
+            fake.calls[0][1:],
+            [{"role": "user", "text": "What is the stack?"}],
         )
 
     def test_no_hit_tells_the_model_the_notes_do_not_contain_the_answer(self):
@@ -395,9 +388,10 @@ class RetrievalReplyTests(TestCase):
             "The notes do not contain the answer.",
             fake.calls[0][0]["text"],
         )
-        self.assertEqual(fake.calls[0][1]["role"], "assistant")
-        self.assertEqual(fake.calls[0][1]["text"], GREETING)
-        self.assertEqual(fake.calls[0][-1], {"role": "user", "text": "Hello"})
+        self.assertEqual(
+            fake.calls[0][1:],
+            [{"role": "user", "text": "Hello"}],
+        )
 
     def test_embedder_failure_keeps_the_user_message(self):
         created = self.client.post(reverse("conversations"))
