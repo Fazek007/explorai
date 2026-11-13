@@ -1,5 +1,6 @@
 .DS_Store
-.cursor
+.cursor/*
+!.cursor/rules/
 
 # Python
 __pycache__/
