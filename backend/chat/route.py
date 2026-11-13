@@ -27,6 +27,9 @@ class Route:
         self.received = received
 
 
+# The new message plus the 2 before it. The window stays this short for now
+# so the small local models, the 8B classifier and nomic-embed-text, are not
+# given a long chat history.
 def recent_block(messages) -> str:
     chosen = list(messages)[-3:]
     lines = []
