@@ -52,6 +52,24 @@ class FakeEmbedder:
         return [float(len(text)), 1.0]
 
 
+class QuestionRouteModel:
+    def reply(self, messages):
+        sent = {
+            "model": "fake-model",
+            "stream": False,
+            "messages": [
+                {"role": message["role"], "content": message["text"]}
+                for message in messages
+            ],
+        }
+        return ModelReply(
+            text="question",
+            model="fake-model",
+            sent=sent,
+            message={"role": "assistant", "content": "question"},
+        )
+
+
 class ConversationApiTests(TestCase):
     def setUp(self):
         super().setUp()
@@ -60,6 +78,9 @@ class ConversationApiTests(TestCase):
         override = override_settings(LOG_DIR=self.log_dir.name)
         override.enable()
         self.addCleanup(override.disable)
+        routed = patch("chat.route.get_chat_model", return_value=QuestionRouteModel())
+        routed.start()
+        self.addCleanup(routed.stop)
         patched = patch(
             "chat.views.retrieve",
             return_value=Retrieval(hits=[], scored=[]),
@@ -290,6 +311,9 @@ class RetrievalReplyTests(TestCase):
         override = override_settings(LOG_DIR=self.log_dir.name)
         override.enable()
         self.addCleanup(override.disable)
+        routed = patch("chat.route.get_chat_model", return_value=QuestionRouteModel())
+        routed.start()
+        self.addCleanup(routed.stop)
 
     def test_hit_adds_a_system_message_and_sources(self):
         created = self.client.post(reverse("conversations"))
@@ -407,6 +431,30 @@ class RetrievalReplyTests(TestCase):
         )
 
 
+class ScriptedModel:
+    def __init__(self, texts):
+        self.texts = list(texts)
+        self.calls = []
+
+    def reply(self, messages):
+        self.calls.append(messages)
+        text = self.texts.pop(0)
+        sent = {
+            "model": "fake-model",
+            "stream": False,
+            "messages": [
+                {"role": message["role"], "content": message["text"]}
+                for message in messages
+            ],
+        }
+        return ModelReply(
+            text=text,
+            model="fake-model",
+            sent=sent,
+            message={"role": "assistant", "content": text},
+        )
+
+
 class TurnLogTests(TestCase):
     def setUp(self):
         super().setUp()
@@ -415,6 +463,9 @@ class TurnLogTests(TestCase):
         override = override_settings(LOG_DIR=self.log_dir.name)
         override.enable()
         self.addCleanup(override.disable)
+        routed = patch("chat.route.get_chat_model", return_value=QuestionRouteModel())
+        routed.start()
+        self.addCleanup(routed.stop)
 
     def test_turn_log_contains_the_sent_request_and_received_message(self):
         created = self.client.post(reverse("conversations"))
@@ -456,3 +507,96 @@ class TurnLogTests(TestCase):
         self.assertEqual(len(files), 10)
         kept = [json.loads(path.read_text())["n"] for path in files]
         self.assertEqual(kept, list(range(1, 11)))
+
+
+class CasualRouteTests(TestCase):
+    def setUp(self):
+        super().setUp()
+        self.log_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.log_dir.cleanup)
+        override = override_settings(LOG_DIR=self.log_dir.name)
+        override.enable()
+        self.addCleanup(override.disable)
+
+    def post_turn(self, model, text):
+        created = self.client.post(reverse("conversations"))
+        conversation_id = created.json()["id"]
+        with (
+            patch("chat.route.get_chat_model", return_value=model),
+            patch("chat.views.get_chat_model", return_value=model),
+            patch("chat.views.retrieve", return_value=Retrieval(hits=[], scored=[])) as retrieve,
+        ):
+            response = self.client.post(
+                reverse("conversation-message", args=[conversation_id]),
+                data={"text": text},
+                content_type="application/json",
+            )
+        return response, retrieve, model
+
+    def test_chat_skips_retrieval_and_uses_the_short_prompt(self):
+        model = ScriptedModel(["chat", "Hello."])
+        response, retrieve, model = self.post_turn(model, "Jónapot!")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["sources"], [])
+        retrieve.assert_not_called()
+        self.assertEqual(
+            model.calls[1][0]["text"],
+            "You are Explorai. Respond briefly and naturally. "
+            "Do not state facts about the notes.",
+        )
+        files = sorted(Path(self.log_dir.name).glob("*.json"))
+        record = json.loads(files[0].read_text())
+        self.assertEqual(record["route"]["decision"], "chat")
+        self.assertIsNone(record["retrieval"])
+        self.assertEqual(record["route"]["received"]["content"], "chat")
+
+    def test_question_still_retrieves(self):
+        model = ScriptedModel(["question", "The water is calm."])
+        response, retrieve, model = self.post_turn(model, "What is the interface?")
+
+        self.assertEqual(response.status_code, 200)
+        retrieve.assert_called_once_with("What is the interface?")
+        self.assertIn(
+            "Answer only from the passages.",
+            model.calls[1][0]["text"],
+        )
+        record = json.loads(
+            sorted(Path(self.log_dir.name).glob("*.json"))[-1].read_text()
+        )
+        self.assertEqual(record["route"]["decision"], "question")
+        self.assertIsNotNone(record["retrieval"])
+
+    def test_messy_classifier_reply_still_retrieves(self):
+        model = ScriptedModel(["maybe both", "The water is calm."])
+        response, retrieve, model = self.post_turn(model, "Hello")
+
+        self.assertEqual(response.status_code, 200)
+        retrieve.assert_called_once_with("Hello")
+        self.assertIn(
+            "The notes do not contain the answer.",
+            model.calls[1][0]["text"],
+        )
+
+    def test_classifier_failure_still_retrieves(self):
+        class DownThenAnswer:
+            def __init__(self):
+                self.calls = []
+
+            def reply(self, messages):
+                self.calls.append(messages)
+                if len(self.calls) == 1:
+                    raise ModelUnavailable("down")
+                return ModelReply(
+                    text="The water is calm.",
+                    model="fake-model",
+                    sent={"messages": []},
+                    message={"role": "assistant", "content": "The water is calm."},
+                )
+
+        model = DownThenAnswer()
+        response, retrieve, model = self.post_turn(model, "Hello")
+
+        self.assertEqual(response.status_code, 200)
+        retrieve.assert_called_once_with("Hello")
+        self.assertIn("Answer only from the passages.", model.calls[1][0]["text"])

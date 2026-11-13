@@ -10,6 +10,7 @@ from chat.llm.base import ModelUnavailable
 from chat.log import write_turn
 from chat.models import GREETING, Conversation, Message
 from chat.rag.search import retrieve
+from chat.route import route
 
 
 def message_payload(message):
@@ -49,6 +50,11 @@ INSTRUCTION = (
     "Do not mention that you are answering from the passages."
 )
 
+CASUAL = (
+    "You are Explorai. Respond briefly and naturally. "
+    "Do not state facts about the notes."
+)
+
 
 def context_message(hits):
     if not hits:
@@ -59,20 +65,25 @@ def context_message(hits):
     return f"{INSTRUCTION}\n\n{passages}"
 
 
-def turn_record(question, retrieval, system, reply=None, error=None):
+def turn_record(question, retrieval, system, route_decision, reply=None, error=None):
     if retrieval is None:
-        scored = []
+        retrieval_payload = None
     else:
-        scored = retrieval.scored
-    return {
-        "kind": "chat",
-        "question": question,
-        "retrieval": {
+        retrieval_payload = {
             "embed_model": settings.OLLAMA_EMBED_MODEL,
             "top_k": settings.RAG_TOP_K,
             "min_score": settings.RAG_MIN_SCORE,
-            "scored": scored,
+            "scored": retrieval.scored,
+        }
+    return {
+        "kind": "chat",
+        "question": question,
+        "route": {
+            "sent": route_decision.sent,
+            "received": route_decision.received,
+            "decision": route_decision.decision,
         },
+        "retrieval": retrieval_payload,
         "system": system,
         "sent": None if reply is None else reply.sent,
         "received": None if reply is None else reply.message,
@@ -129,14 +140,19 @@ def conversation_message(request, conversation_id):
         return JsonResponse({"error": "A text field is required."}, status=400)
 
     Message.objects.create(conversation=conversation, role="user", text=text)
-    try:
-        retrieval = retrieve(text)
-    except EmbedderUnavailable as exc:
-        write_turn(turn_record(text, None, None, error=str(exc)))
-        return JsonResponse({"error": "The model is unavailable."}, status=502)
-
-    hits = retrieval.hits
-    system = context_message(hits)
+    decision = route(text)
+    retrieval = None
+    if decision.decision == "chat":
+        hits = []
+        system = CASUAL
+    else:
+        try:
+            retrieval = retrieve(text)
+        except EmbedderUnavailable as exc:
+            write_turn(turn_record(text, None, None, decision, error=str(exc)))
+            return JsonResponse({"error": "The model is unavailable."}, status=502)
+        hits = retrieval.hits
+        system = context_message(hits)
     history = [{"role": "system", "text": system}]
     history.extend(
         {"role": message.role, "text": message.text}
@@ -145,21 +161,24 @@ def conversation_message(request, conversation_id):
     try:
         reply = get_chat_model().reply(history)
     except ModelUnavailable as exc:
-        record = turn_record(text, retrieval, system, error=str(exc))
+        record = turn_record(text, retrieval, system, decision, error=str(exc))
         record["sent"] = exc.sent
         write_turn(record)
         return JsonResponse({"error": "The model is unavailable."}, status=502)
 
-    write_turn(turn_record(text, retrieval, system, reply=reply))
+    write_turn(turn_record(text, retrieval, system, decision, reply=reply))
 
-    sources = [
-        {
-            "source": hit.chunk.source,
-            "position": hit.chunk.position,
-            "score": hit.score,
-        }
-        for hit in hits
-    ]
+    if decision.decision == "chat":
+        sources = []
+    else:
+        sources = [
+            {
+                "source": hit.chunk.source,
+                "position": hit.chunk.position,
+                "score": hit.score,
+            }
+            for hit in hits
+        ]
     message = Message.objects.create(
         conversation=conversation,
         role="assistant",
