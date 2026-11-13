@@ -13,13 +13,14 @@ from chat.llm.base import ModelReply, ModelUnavailable
 from chat.models import Chunk, Conversation, Message
 from chat.rag.chunking import split_paragraphs
 from chat.rag.search import Hit, Retrieval, retrieve
+from chat.route import SCHEMA, recent_block
 
 
 class FakeModel:
     def __init__(self):
         self.calls = []
 
-    def reply(self, messages):
+    def reply(self, messages, format=None, options=None):
         self.calls.append(messages)
         sent = {
             "model": "fake-model",
@@ -38,7 +39,7 @@ class FakeModel:
 
 
 class FailingModel:
-    def reply(self, messages):
+    def reply(self, messages, format=None, options=None):
         raise ModelUnavailable("down")
 
 
@@ -53,7 +54,7 @@ class FakeEmbedder:
 
 
 class QuestionRouteModel:
-    def reply(self, messages):
+    def reply(self, messages, format=None, options=None):
         sent = {
             "model": "fake-model",
             "stream": False,
@@ -429,9 +430,13 @@ class ScriptedModel:
     def __init__(self, texts):
         self.texts = list(texts)
         self.calls = []
+        self.formats = []
+        self.options = []
 
-    def reply(self, messages):
+    def reply(self, messages, format=None, options=None):
         self.calls.append(messages)
+        self.formats.append(format)
+        self.options.append(options)
         text = self.texts.pop(0)
         sent = {
             "model": "fake-model",
@@ -528,12 +533,14 @@ class CasualRouteTests(TestCase):
         return response, retrieve, model
 
     def test_chat_skips_retrieval_and_uses_the_short_prompt(self):
-        model = ScriptedModel(["chat", "Hello."])
+        model = ScriptedModel(['{"route": "chat"}', "Hello."])
         response, retrieve, model = self.post_turn(model, "Jónapot!")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["sources"], [])
         retrieve.assert_not_called()
+        self.assertEqual(model.formats[0], SCHEMA)
+        self.assertEqual(model.options[0], {"temperature": 0})
         self.assertEqual(
             model.calls[1][0]["text"],
             "You are Explorai. Respond briefly and naturally. "
@@ -543,14 +550,15 @@ class CasualRouteTests(TestCase):
         record = json.loads(files[0].read_text())
         self.assertEqual(record["route"]["decision"], "chat")
         self.assertIsNone(record["retrieval"])
-        self.assertEqual(record["route"]["received"]["content"], "chat")
+        self.assertIsNone(record["query"])
+        self.assertEqual(record["route"]["received"]["content"], '{"route": "chat"}')
 
     def test_question_still_retrieves(self):
-        model = ScriptedModel(["question", "The water is calm."])
+        model = ScriptedModel(['{"route": "question"}', "The water is calm."])
         response, retrieve, model = self.post_turn(model, "What is the interface?")
 
         self.assertEqual(response.status_code, 200)
-        retrieve.assert_called_once_with("What is the interface?")
+        retrieve.assert_called_once_with("User: What is the interface?")
         self.assertIn(
             "Answer only from the passages.",
             model.calls[1][0]["text"],
@@ -559,17 +567,71 @@ class CasualRouteTests(TestCase):
             sorted(Path(self.log_dir.name).glob("*.json"))[-1].read_text()
         )
         self.assertEqual(record["route"]["decision"], "question")
+        self.assertEqual(record["query"], "User: What is the interface?")
         self.assertIsNotNone(record["retrieval"])
 
-    def test_messy_classifier_reply_still_retrieves(self):
+    def test_invalid_json_still_retrieves(self):
         model = ScriptedModel(["maybe both", "The water is calm."])
         response, retrieve, model = self.post_turn(model, "Hello")
 
         self.assertEqual(response.status_code, 200)
-        retrieve.assert_called_once_with("Hello")
+        retrieve.assert_called_once_with("User: Hello")
         self.assertIn(
             "The notes do not contain the answer.",
             model.calls[1][0]["text"],
+        )
+
+    def test_follow_up_retrieves_the_recent_block(self):
+        model = ScriptedModel(
+            [
+                '{"route": "question"}',
+                "The interface is a TypeScript page.",
+                '{"route": "question"}',
+                "Django stores the conversations.",
+            ]
+        )
+        created = self.client.post(reverse("conversations"))
+        conversation_id = created.json()["id"]
+        with (
+            patch("chat.route.get_chat_model", return_value=model),
+            patch("chat.views.get_chat_model", return_value=model),
+            patch("chat.views.retrieve", return_value=Retrieval(hits=[], scored=[])) as retrieve,
+        ):
+            self.client.post(
+                reverse("conversation-message", args=[conversation_id]),
+                data={"text": "What is the interface?"},
+                content_type="application/json",
+            )
+            response = self.client.post(
+                reverse("conversation-message", args=[conversation_id]),
+                data={"text": "tell me more"},
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            retrieve.call_args.args[0],
+            "User: What is the interface?\n"
+            "Assistant: The interface is a TypeScript page.\n"
+            "User: tell me more",
+        )
+
+    def test_recent_block_keeps_two_past_messages(self):
+        class Line:
+            def __init__(self, role, text):
+                self.role = role
+                self.text = text
+
+        messages = [
+            Line("user", "one"),
+            Line("assistant", "two"),
+            Line("user", "three"),
+            Line("assistant", "four"),
+            Line("user", "five"),
+        ]
+        self.assertEqual(
+            recent_block(messages),
+            "User: three\nAssistant: four\nUser: five",
         )
 
     def test_classifier_failure_still_retrieves(self):
@@ -577,7 +639,7 @@ class CasualRouteTests(TestCase):
             def __init__(self):
                 self.calls = []
 
-            def reply(self, messages):
+            def reply(self, messages, format=None, options=None):
                 self.calls.append(messages)
                 if len(self.calls) == 1:
                     raise ModelUnavailable("down")
@@ -592,5 +654,5 @@ class CasualRouteTests(TestCase):
         response, retrieve, model = self.post_turn(model, "Hello")
 
         self.assertEqual(response.status_code, 200)
-        retrieve.assert_called_once_with("Hello")
+        retrieve.assert_called_once_with("User: Hello")
         self.assertIn("Answer only from the passages.", model.calls[1][0]["text"])

@@ -13,5 +13,5 @@ class ModelReply:
 
 
 class ChatModel:
-    def reply(self, messages: list[dict]) -> ModelReply:
+    def reply(self, messages: list[dict], format=None, options=None) -> ModelReply:
         raise NotImplementedError

@@ -10,7 +10,7 @@ from chat.llm.base import ModelUnavailable
 from chat.log import write_turn
 from chat.models import Conversation, Message
 from chat.rag.search import retrieve
-from chat.route import route
+from chat.route import recent_block, route
 
 
 def message_payload(message):
@@ -65,7 +65,7 @@ def context_message(hits):
     return f"{INSTRUCTION}\n\n{passages}"
 
 
-def turn_record(question, retrieval, system, route_decision, reply=None, error=None):
+def turn_record(question, retrieval, system, route_decision, query=None, reply=None, error=None):
     if retrieval is None:
         retrieval_payload = None
     else:
@@ -78,6 +78,7 @@ def turn_record(question, retrieval, system, route_decision, reply=None, error=N
     return {
         "kind": "chat",
         "question": question,
+        "query": query,
         "route": {
             "sent": route_decision.sent,
             "received": route_decision.received,
@@ -134,16 +135,18 @@ def conversation_message(request, conversation_id):
         return JsonResponse({"error": "A text field is required."}, status=400)
 
     Message.objects.create(conversation=conversation, role="user", text=text)
-    decision = route(text)
+    block = recent_block(conversation.messages.all())
+    decision = route(block)
+    query = None if decision.decision == "chat" else block
     retrieval = None
     if decision.decision == "chat":
         hits = []
         system = CASUAL
     else:
         try:
-            retrieval = retrieve(text)
+            retrieval = retrieve(block)
         except EmbedderUnavailable as exc:
-            write_turn(turn_record(text, None, None, decision, error=str(exc)))
+            write_turn(turn_record(text, None, None, decision, query=query, error=str(exc)))
             return JsonResponse({"error": "The model is unavailable."}, status=502)
         hits = retrieval.hits
         system = context_message(hits)
@@ -155,12 +158,12 @@ def conversation_message(request, conversation_id):
     try:
         reply = get_chat_model().reply(history)
     except ModelUnavailable as exc:
-        record = turn_record(text, retrieval, system, decision, error=str(exc))
+        record = turn_record(text, retrieval, system, decision, query=query, error=str(exc))
         record["sent"] = exc.sent
         write_turn(record)
         return JsonResponse({"error": "The model is unavailable."}, status=502)
 
-    write_turn(turn_record(text, retrieval, system, decision, reply=reply))
+    write_turn(turn_record(text, retrieval, system, decision, query=query, reply=reply))
 
     if decision.decision == "chat":
         sources = []
