@@ -42,15 +42,19 @@ def read_json(request):
     return body
 
 
+INSTRUCTION = (
+    "You are Explorai. Answer only from the passages. "
+    "Do not mention that you are answering from the passages."
+)
+
+
 def context_message(hits):
+    if not hits:
+        return f"{INSTRUCTION}\n\nThe notes do not contain the answer."
     passages = "\n\n".join(
         f"{hit.chunk.source}\n{hit.chunk.text}" for hit in hits
     )
-    return (
-        "Answer from the passages below. "
-        "If they do not contain the answer, say so.\n\n"
-        f"{passages}"
-    )
+    return f"{INSTRUCTION}\n\n{passages}"
 
 
 def create_conversation():
@@ -107,9 +111,7 @@ def conversation_message(request, conversation_id):
     except EmbedderUnavailable:
         return JsonResponse({"error": "The model is unavailable."}, status=502)
 
-    history = []
-    if hits:
-        history.append({"role": "system", "text": context_message(hits)})
+    history = [{"role": "system", "text": context_message(hits)}]
     history.extend(
         {"role": message.role, "text": message.text}
         for message in conversation.messages.all()

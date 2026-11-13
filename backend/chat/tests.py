@@ -281,7 +281,15 @@ class RetrievalReplyTests(TestCase):
             [{"source": "handbook.md", "position": 2, "score": 0.71}],
         )
         self.assertEqual(fake.calls[0][0]["role"], "system")
-        self.assertIn("do not contain the answer", fake.calls[0][0]["text"])
+        self.assertIn("You are Explorai.", fake.calls[0][0]["text"])
+        self.assertIn(
+            "Do not mention that you are answering from the passages.",
+            fake.calls[0][0]["text"],
+        )
+        self.assertNotIn(
+            "If they do not contain the answer, say so.",
+            fake.calls[0][0]["text"],
+        )
         self.assertIn("handbook.md", fake.calls[0][0]["text"])
         self.assertIn("The stack is Django.", fake.calls[0][0]["text"])
         self.assertEqual(fake.calls[0][1]["role"], "assistant")
@@ -290,7 +298,7 @@ class RetrievalReplyTests(TestCase):
             {"role": "user", "text": "What is the stack?"},
         )
 
-    def test_no_hit_leaves_history_without_a_system_message(self):
+    def test_no_hit_tells_the_model_the_notes_do_not_contain_the_answer(self):
         created = self.client.post(reverse("conversations"))
         conversation_id = created.json()["id"]
         fake = FakeModel()
@@ -307,8 +315,13 @@ class RetrievalReplyTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["sources"], [])
-        self.assertEqual(fake.calls[0][0]["role"], "assistant")
-        self.assertEqual(fake.calls[0][0]["text"], GREETING)
+        self.assertEqual(fake.calls[0][0]["role"], "system")
+        self.assertIn(
+            "The notes do not contain the answer.",
+            fake.calls[0][0]["text"],
+        )
+        self.assertEqual(fake.calls[0][1]["role"], "assistant")
+        self.assertEqual(fake.calls[0][1]["text"], GREETING)
         self.assertEqual(fake.calls[0][-1], {"role": "user", "text": "Hello"})
 
     def test_embedder_failure_keeps_the_user_message(self):
