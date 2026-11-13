@@ -1,5 +1,6 @@
 .DS_Store
-.cursor
+.cursor/*
+!.cursor/rules/
 
 # Python
 __pycache__/
@@ -7,6 +8,7 @@ __pycache__/
 backend/.venv/
 backend/db.sqlite3
 backend/.env
+backend/logs/
 
 # Node
 node_modules/

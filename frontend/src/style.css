@@ -157,6 +157,15 @@ body {
   gap: 0.5rem;
 }
 
+.empty-hint {
+  margin: auto;
+  max-width: 16rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
 .message {
   max-width: 80%;
   min-width: 0;

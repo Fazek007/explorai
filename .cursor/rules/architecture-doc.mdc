@@ -1,0 +1,10 @@
+---
+description: Keep ARCHITECTURE.md in sync with how the app works
+alwaysApply: true
+---
+
+# Architecture document
+
+`ARCHITECTURE.md` at the repo root describes how Explorai works.
+
+Before every commit, read `ARCHITECTURE.md`. If the commit changes how the app works, update that file in the same commit. If it does not, leave the file as it is. The document and the code stay in sync.

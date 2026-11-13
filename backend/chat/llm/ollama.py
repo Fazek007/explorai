@@ -10,7 +10,7 @@ class OllamaModel:
         self.base_url = base_url.rstrip("/")
         self.model_name = model
 
-    def reply(self, messages: list[dict]) -> ModelReply:
+    def reply(self, messages: list[dict], format=None, options=None) -> ModelReply:
         payload = {
             "model": self.model_name,
             "stream": False,
@@ -19,6 +19,10 @@ class OllamaModel:
                 for message in messages
             ],
         }
+        if format is not None:
+            payload["format"] = format
+        if options is not None:
+            payload["options"] = options
         request = Request(
             f"{self.base_url}/api/chat",
             data=json.dumps(payload).encode(),
@@ -31,7 +35,12 @@ class OllamaModel:
             message = body["message"]
             content = message["content"]
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
-            raise ModelUnavailable("The model is unavailable.") from exc
+            raise ModelUnavailable("The model is unavailable.", sent=payload) from exc
         if not isinstance(content, str):
-            raise ModelUnavailable("The model is unavailable.")
-        return ModelReply(text=content, model=self.model_name)
+            raise ModelUnavailable("The model is unavailable.", sent=payload)
+        return ModelReply(
+            text=content,
+            model=self.model_name,
+            sent=payload,
+            message=message,
+        )

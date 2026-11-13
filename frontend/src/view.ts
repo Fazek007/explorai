@@ -29,6 +29,14 @@ export function createView(root: HTMLElement) {
 
   return {
     render(messages: Message[]): void {
+      if (messages.length === 0) {
+        const hint = document.createElement("p");
+        hint.className = "empty-hint";
+        hint.textContent =
+          "Text Explorai to get to know all about this application.";
+        list.replaceChildren(hint);
+        return;
+      }
       list.replaceChildren(
         ...messages.map((message) => {
           const item = document.createElement("li");

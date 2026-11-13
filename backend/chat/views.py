@@ -1,11 +1,16 @@
 import json
 
+from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from chat.embed.base import EmbedderUnavailable
 from chat.llm import get_chat_model
 from chat.llm.base import ModelUnavailable
-from chat.models import GREETING, Conversation, Message
+from chat.log import write_turn
+from chat.models import Conversation, Message
+from chat.rag.search import retrieve
+from chat.route import recent_block, route
 
 
 def message_payload(message):
@@ -40,14 +45,55 @@ def read_json(request):
     return body
 
 
-def create_conversation():
-    conversation = Conversation.objects.create()
-    Message.objects.create(
-        conversation=conversation,
-        role="assistant",
-        text=GREETING,
+INSTRUCTION = (
+    "You are Explorai. Answer only from the passages. "
+    "Do not mention that you are answering from the passages."
+)
+
+CASUAL = (
+    "You are Explorai. Respond briefly and naturally. "
+    "Do not state facts about the notes."
+)
+
+
+def context_message(hits):
+    if not hits:
+        return f"{INSTRUCTION}\n\nThe notes do not contain the answer."
+    passages = "\n\n".join(
+        f"{hit.chunk.source}\n{hit.chunk.text}" for hit in hits
     )
-    return conversation
+    return f"{INSTRUCTION}\n\n{passages}"
+
+
+def turn_record(question, retrieval, system, route_decision, query=None, reply=None, error=None):
+    if retrieval is None:
+        retrieval_payload = None
+    else:
+        retrieval_payload = {
+            "embed_model": settings.OLLAMA_EMBED_MODEL,
+            "top_k": settings.RAG_TOP_K,
+            "min_score": settings.RAG_MIN_SCORE,
+            "scored": retrieval.scored,
+        }
+    return {
+        "kind": "chat",
+        "question": question,
+        "query": query,
+        "route": {
+            "sent": route_decision.sent,
+            "received": route_decision.received,
+            "decision": route_decision.decision,
+        },
+        "retrieval": retrieval_payload,
+        "system": system,
+        "sent": None if reply is None else reply.sent,
+        "received": None if reply is None else reply.message,
+        "error": error,
+    }
+
+
+def create_conversation():
+    return Conversation.objects.create()
 
 
 @csrf_exempt
@@ -89,21 +135,53 @@ def conversation_message(request, conversation_id):
         return JsonResponse({"error": "A text field is required."}, status=400)
 
     Message.objects.create(conversation=conversation, role="user", text=text)
-    history = [
+    block = recent_block(conversation.messages.all())
+    decision = route(block)
+    query = None if decision.decision == "chat" else block
+    retrieval = None
+    if decision.decision == "chat":
+        hits = []
+        system = CASUAL
+    else:
+        try:
+            retrieval = retrieve(block)
+        except EmbedderUnavailable as exc:
+            write_turn(turn_record(text, None, None, decision, query=query, error=str(exc)))
+            return JsonResponse({"error": "The model is unavailable."}, status=502)
+        hits = retrieval.hits
+        system = context_message(hits)
+    history = [{"role": "system", "text": system}]
+    history.extend(
         {"role": message.role, "text": message.text}
         for message in conversation.messages.all()
-    ]
+    )
     try:
         reply = get_chat_model().reply(history)
-    except ModelUnavailable:
+    except ModelUnavailable as exc:
+        record = turn_record(text, retrieval, system, decision, query=query, error=str(exc))
+        record["sent"] = exc.sent
+        write_turn(record)
         return JsonResponse({"error": "The model is unavailable."}, status=502)
 
+    write_turn(turn_record(text, retrieval, system, decision, query=query, reply=reply))
+
+    if decision.decision == "chat":
+        sources = []
+    else:
+        sources = [
+            {
+                "source": hit.chunk.source,
+                "position": hit.chunk.position,
+                "score": hit.score,
+            }
+            for hit in hits
+        ]
     message = Message.objects.create(
         conversation=conversation,
         role="assistant",
         text=reply.text,
         model=reply.model,
-        sources=[],
+        sources=sources,
     )
     return JsonResponse(
         {
