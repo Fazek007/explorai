@@ -1,11 +1,15 @@
 class ModelUnavailable(Exception):
-    pass
+    def __init__(self, message="The model is unavailable.", sent=None):
+        super().__init__(message)
+        self.sent = sent
 
 
 class ModelReply:
-    def __init__(self, text: str, model: str):
+    def __init__(self, text: str, model: str, sent=None, message=None):
         self.text = text
         self.model = model
+        self.sent = sent
+        self.message = message
 
 
 class ChatModel:

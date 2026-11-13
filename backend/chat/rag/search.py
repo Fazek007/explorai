@@ -12,6 +12,12 @@ class Hit:
         self.score = score
 
 
+class Retrieval:
+    def __init__(self, hits: list[Hit], scored: list[dict]):
+        self.hits = hits
+        self.scored = scored
+
+
 def cosine(left: list[float], right: list[float]) -> float:
     dot = 0.0
     left_norm = 0.0
@@ -25,13 +31,27 @@ def cosine(left: list[float], right: list[float]) -> float:
     return dot / (math.sqrt(left_norm) * math.sqrt(right_norm))
 
 
-def retrieve(question: str) -> list[Hit]:
+def retrieve(question: str) -> Retrieval:
     embedder = get_embedder()
     query = embedder.embed_query(question)
-    hits = []
+    ranked = []
     for chunk in Chunk.objects.filter(embed_model=embedder.model_name):
-        score = cosine(query, chunk.embedding)
-        if score >= settings.RAG_MIN_SCORE:
-            hits.append(Hit(chunk=chunk, score=score))
-    hits.sort(key=lambda hit: hit.score, reverse=True)
-    return hits[: settings.RAG_TOP_K]
+        ranked.append((chunk, cosine(query, chunk.embedding)))
+    ranked.sort(key=lambda item: item[1], reverse=True)
+    hits = []
+    kept_ids = set()
+    for chunk, score in ranked:
+        if score < settings.RAG_MIN_SCORE or len(hits) >= settings.RAG_TOP_K:
+            continue
+        hits.append(Hit(chunk=chunk, score=score))
+        kept_ids.add(chunk.id)
+    scored = [
+        {
+            "source": chunk.source,
+            "position": chunk.position,
+            "score": score,
+            "kept": chunk.id in kept_ids,
+        }
+        for chunk, score in ranked
+    ]
+    return Retrieval(hits=hits, scored=scored)

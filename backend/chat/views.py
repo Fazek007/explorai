@@ -1,11 +1,13 @@
 import json
 
+from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from chat.embed.base import EmbedderUnavailable
 from chat.llm import get_chat_model
 from chat.llm.base import ModelUnavailable
+from chat.log import write_turn
 from chat.models import GREETING, Conversation, Message
 from chat.rag.search import retrieve
 
@@ -55,6 +57,27 @@ def context_message(hits):
         f"{hit.chunk.source}\n{hit.chunk.text}" for hit in hits
     )
     return f"{INSTRUCTION}\n\n{passages}"
+
+
+def turn_record(question, retrieval, system, reply=None, error=None):
+    if retrieval is None:
+        scored = []
+    else:
+        scored = retrieval.scored
+    return {
+        "kind": "chat",
+        "question": question,
+        "retrieval": {
+            "embed_model": settings.OLLAMA_EMBED_MODEL,
+            "top_k": settings.RAG_TOP_K,
+            "min_score": settings.RAG_MIN_SCORE,
+            "scored": scored,
+        },
+        "system": system,
+        "sent": None if reply is None else reply.sent,
+        "received": None if reply is None else reply.message,
+        "error": error,
+    }
 
 
 def create_conversation():
@@ -107,19 +130,27 @@ def conversation_message(request, conversation_id):
 
     Message.objects.create(conversation=conversation, role="user", text=text)
     try:
-        hits = retrieve(text)
-    except EmbedderUnavailable:
+        retrieval = retrieve(text)
+    except EmbedderUnavailable as exc:
+        write_turn(turn_record(text, None, None, error=str(exc)))
         return JsonResponse({"error": "The model is unavailable."}, status=502)
 
-    history = [{"role": "system", "text": context_message(hits)}]
+    hits = retrieval.hits
+    system = context_message(hits)
+    history = [{"role": "system", "text": system}]
     history.extend(
         {"role": message.role, "text": message.text}
         for message in conversation.messages.all()
     )
     try:
         reply = get_chat_model().reply(history)
-    except ModelUnavailable:
+    except ModelUnavailable as exc:
+        record = turn_record(text, retrieval, system, error=str(exc))
+        record["sent"] = exc.sent
+        write_turn(record)
         return JsonResponse({"error": "The model is unavailable."}, status=502)
+
+    write_turn(turn_record(text, retrieval, system, reply=reply))
 
     sources = [
         {

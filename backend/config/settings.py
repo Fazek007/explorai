@@ -37,6 +37,7 @@ EMBED_PROVIDER = os.environ.get("EMBED_PROVIDER", "ollama")
 OLLAMA_EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 RAG_TOP_K = int(os.environ.get("RAG_TOP_K", "3"))
 RAG_MIN_SCORE = float(os.environ.get("RAG_MIN_SCORE", "0.5"))
+LOG_DIR = os.environ.get("LOG_DIR", BASE_DIR / "logs")
 
 
 # Quick-start development settings - unsuitable for production

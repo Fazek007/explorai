@@ -31,7 +31,12 @@ class OllamaModel:
             message = body["message"]
             content = message["content"]
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
-            raise ModelUnavailable("The model is unavailable.") from exc
+            raise ModelUnavailable("The model is unavailable.", sent=payload) from exc
         if not isinstance(content, str):
-            raise ModelUnavailable("The model is unavailable.")
-        return ModelReply(text=content, model=self.model_name)
+            raise ModelUnavailable("The model is unavailable.", sent=payload)
+        return ModelReply(
+            text=content,
+            model=self.model_name,
+            sent=payload,
+            message=message,
+        )

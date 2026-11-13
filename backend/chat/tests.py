@@ -1,3 +1,4 @@
+import json
 import tempfile
 from io import StringIO
 from pathlib import Path
@@ -11,7 +12,7 @@ from chat.embed.base import EmbedderUnavailable
 from chat.llm.base import ModelReply, ModelUnavailable
 from chat.models import GREETING, Chunk, Conversation, Message
 from chat.rag.chunking import split_paragraphs
-from chat.rag.search import Hit, retrieve
+from chat.rag.search import Hit, Retrieval, retrieve
 
 
 class FakeModel:
@@ -20,7 +21,20 @@ class FakeModel:
 
     def reply(self, messages):
         self.calls.append(messages)
-        return ModelReply(text="The water is calm.", model="fake-model")
+        sent = {
+            "model": "fake-model",
+            "stream": False,
+            "messages": [
+                {"role": message["role"], "content": message["text"]}
+                for message in messages
+            ],
+        }
+        return ModelReply(
+            text="The water is calm.",
+            model="fake-model",
+            sent=sent,
+            message={"role": "assistant", "content": "The water is calm."},
+        )
 
 
 class FailingModel:
@@ -41,7 +55,15 @@ class FakeEmbedder:
 class ConversationApiTests(TestCase):
     def setUp(self):
         super().setUp()
-        patched = patch("chat.views.retrieve", return_value=[])
+        self.log_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.log_dir.cleanup)
+        override = override_settings(LOG_DIR=self.log_dir.name)
+        override.enable()
+        self.addCleanup(override.disable)
+        patched = patch(
+            "chat.views.retrieve",
+            return_value=Retrieval(hits=[], scored=[]),
+        )
         patched.start()
         self.addCleanup(patched.stop)
 
@@ -242,14 +264,33 @@ class RetrieveTests(TestCase):
         )
 
         with patch("chat.rag.search.get_embedder", return_value=QueryEmbedder()):
-            hits = retrieve("when do the doors shut?")
+            retrieval = retrieve("when do the doors shut?")
 
+        hits = retrieval.hits
         self.assertEqual([hit.chunk.text for hit in hits], ["close", "near"])
         self.assertAlmostEqual(hits[0].score, 1.0)
         self.assertAlmostEqual(hits[1].score, 0.8)
+        kept = {
+            item["position"]: item["kept"]
+            for item in retrieval.scored
+            if item["source"] == "handbook.md"
+        }
+        self.assertEqual(kept, {0: True, 1: True, 2: False, 3: False})
+        self.assertNotIn(
+            "other.md",
+            {item["source"] for item in retrieval.scored},
+        )
 
 
 class RetrievalReplyTests(TestCase):
+    def setUp(self):
+        super().setUp()
+        self.log_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.log_dir.cleanup)
+        override = override_settings(LOG_DIR=self.log_dir.name)
+        override.enable()
+        self.addCleanup(override.disable)
+
     def test_hit_adds_a_system_message_and_sources(self):
         created = self.client.post(reverse("conversations"))
         conversation_id = created.json()["id"]
@@ -265,7 +306,17 @@ class RetrievalReplyTests(TestCase):
         with (
             patch(
                 "chat.views.retrieve",
-                return_value=[Hit(chunk=chunk, score=0.71)],
+                return_value=Retrieval(
+                    hits=[Hit(chunk=chunk, score=0.71)],
+                    scored=[
+                        {
+                            "source": "handbook.md",
+                            "position": 2,
+                            "score": 0.71,
+                            "kept": True,
+                        }
+                    ],
+                ),
             ),
             patch("chat.views.get_chat_model", return_value=fake),
         ):
@@ -304,7 +355,7 @@ class RetrievalReplyTests(TestCase):
         fake = FakeModel()
 
         with (
-            patch("chat.views.retrieve", return_value=[]),
+            patch("chat.views.retrieve", return_value=Retrieval(hits=[], scored=[])),
             patch("chat.views.get_chat_model", return_value=fake),
         ):
             response = self.client.post(
@@ -354,3 +405,54 @@ class RetrievalReplyTests(TestCase):
                 text="The model is unavailable.",
             ).exists()
         )
+
+
+class TurnLogTests(TestCase):
+    def setUp(self):
+        super().setUp()
+        self.log_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.log_dir.cleanup)
+        override = override_settings(LOG_DIR=self.log_dir.name)
+        override.enable()
+        self.addCleanup(override.disable)
+
+    def test_turn_log_contains_the_sent_request_and_received_message(self):
+        created = self.client.post(reverse("conversations"))
+        conversation_id = created.json()["id"]
+        fake = FakeModel()
+        with (
+            patch(
+                "chat.views.retrieve",
+                return_value=Retrieval(hits=[], scored=[]),
+            ),
+            patch("chat.views.get_chat_model", return_value=fake),
+        ):
+            response = self.client.post(
+                reverse("conversation-message", args=[conversation_id]),
+                data={"text": "Hello"},
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        files = sorted(Path(self.log_dir.name).glob("*.json"))
+        self.assertEqual(len(files), 1)
+        record = json.loads(files[0].read_text())
+        self.assertEqual(record["question"], "Hello")
+        self.assertEqual(record["sent"]["messages"][-1]["content"], "Hello")
+        self.assertEqual(
+            record["received"],
+            {"role": "assistant", "content": "The water is calm."},
+        )
+        self.assertIsNone(record["error"])
+        self.assertIn("The notes do not contain the answer.", record["system"])
+
+    def test_only_ten_logs_are_kept(self):
+        from chat.log import write_turn
+
+        for number in range(11):
+            write_turn({"n": number})
+
+        files = sorted(Path(self.log_dir.name).glob("*.json"))
+        self.assertEqual(len(files), 10)
+        kept = [json.loads(path.read_text())["n"] for path in files]
+        self.assertEqual(kept, list(range(1, 11)))

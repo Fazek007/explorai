@@ -7,6 +7,7 @@ __pycache__/
 backend/.venv/
 backend/db.sqlite3
 backend/.env
+backend/logs/
 
 # Node
 node_modules/
